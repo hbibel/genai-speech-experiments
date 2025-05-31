@@ -29,7 +29,7 @@ async function main() {
 
     const sessionConfig: TranscriptionSessionUpdate = {
       session: {
-        input_audio_noise_reduction: { type: "near_field" },
+        input_audio_noise_reduction: { type: "far_field" },
         input_audio_transcription: {
           language: "en",
           model: "gpt-4o-mini-transcribe",
@@ -44,9 +44,11 @@ async function main() {
     ws.send(JSON.stringify(sessionConfig));
   });
 
+  let speechStart: number | undefined = undefined;
+  let transcriptionStart: number | undefined = undefined;
+
   ws.on("message", function incoming(message) {
     const event = JSON.parse(message.toString());
-    console.log(event);
 
     switch (event["type"]) {
       case "transcription_session.updated":
@@ -54,21 +56,45 @@ async function main() {
         break;
       case "conversation.item.input_audio_transcription.completed":
         state = "conversation_done";
+
+        if (transcriptionStart === undefined) {
+          console.warn("Missing input_audio_buffer.committed event");
+        } else {
+          const transcriptionDuration =
+            (Date.now() - transcriptionStart) / 1000;
+          console.log(
+            `Transcription took ${transcriptionDuration.toFixed(2)} seconds`,
+          );
+        }
+
+        console.log(event);
         break;
       case "conversation.item.input_audio_transcription.delta":
         state = "waiting_for_recording";
         console.log("delta:", event["delta"]);
         break;
       case "input_audio_buffer.speech_stopped":
-        console.log("User has stopped speaking");
+        if (speechStart === undefined) {
+          console.warn("Missing speech_started event");
+          console.log("User has stopped speaking");
+        } else {
+          const speechDuration = (Date.now() - speechStart) / 1000;
+          console.log(
+            `User has stopped speaking after ${speechDuration.toFixed(2)} seconds`,
+          );
+        }
+        break;
+      case "input_audio_buffer.speech_started":
+        speechStart = Date.now();
+        break;
+      case "input_audio_buffer.committed":
+        transcriptionStart = Date.now();
         break;
       case "transcription_session.created":
-      case "input_audio_buffer.speech_started":
-      case "input_audio_buffer.committed":
-        // ignore
+      case "conversation.item.created":
         break;
       default:
-        console.warn("unhandled event");
+        console.warn("unhandled event", event);
     }
   });
 
@@ -78,7 +104,7 @@ async function main() {
 
   while (state !== "conversation_done") {
     if (state === "waiting_for_recording") {
-      const data: Buffer | null = audioStream.read();
+      const data: Buffer | null = audioStream.read(4096);
       if (data !== null) {
         ws.send(
           JSON.stringify({
@@ -87,12 +113,14 @@ async function main() {
           }),
         );
       } else {
-        console.log("not enough data");
+        // data === null because there are less than 4096 bytes in the audio buffer
       }
     }
     await new Promise((r) => setTimeout(r, 500));
   }
-  console.log("shutting down");
+  audioStream.destroy?.();
+
+  ws.removeAllListeners();
   ws.close();
 }
 
