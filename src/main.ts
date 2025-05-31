@@ -59,13 +59,20 @@ async function main() {
         state = "waiting_for_recording";
         console.log("delta:", event["delta"]);
         break;
+      case "input_audio_buffer.speech_stopped":
+        console.log("User has stopped speaking");
+        break;
       case "transcription_session.created":
+      case "input_audio_buffer.speech_started":
+      case "input_audio_buffer.committed":
         // ignore
         break;
       default:
         console.warn("unhandled event");
     }
   });
+
+  ws.on("close", () => console.log("Websocket closed"));
 
   const audioStream = startRecording();
 
@@ -86,6 +93,7 @@ async function main() {
     await new Promise((r) => setTimeout(r, 500));
   }
   console.log("shutting down");
+  ws.close();
 }
 
 main().catch((err) => {
