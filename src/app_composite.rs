@@ -1,12 +1,12 @@
 use crate::{
     config::Config,
     logger::{ConsoleLogger, Logger},
-    speech::{audio::AudioRecorder, input::OpenaiSpeechListener},
+    speech::{audio::AudioRecorder, input::SpeechListener},
 };
 use std::sync::{Arc, Mutex};
 
 pub struct AppComposite {
-    pub speech_listener: OpenaiSpeechListener,
+    pub speech_listener: SpeechListener,
     pub logger: Arc<Mutex<dyn Logger>>,
 }
 
@@ -19,7 +19,7 @@ impl AppComposite {
         let audio_recorder = AudioRecorder::new(logger.clone());
 
         Self {
-            speech_listener: OpenaiSpeechListener::new(config, audio_recorder),
+            speech_listener: SpeechListener::new(config, audio_recorder),
             logger,
         }
     }
