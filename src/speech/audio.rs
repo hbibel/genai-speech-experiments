@@ -12,7 +12,7 @@ use spa::pod::serialize::PodSerializer;
 
 use crate::logger::Logger;
 
-use crate::speech::audio_format::{AudioFormat, SoundSpec};
+use crate::speech::audio_format::{PCMFormat, SoundSpec};
 
 #[derive(Clone)]
 pub struct StopTrigger {
@@ -133,34 +133,7 @@ fn start_pipewire_loop(
                     num_channels,
                 } => {
                     let pw_format = match format {
-                        AudioFormat::S16LE => PwAudioFormat::S16LE,
-                        AudioFormat::S16BE => PwAudioFormat::S16BE,
-                        AudioFormat::U16LE => PwAudioFormat::U16LE,
-                        AudioFormat::U16BE => PwAudioFormat::U16BE,
-                        AudioFormat::S24_32LE => PwAudioFormat::S24_32LE,
-                        AudioFormat::S24_32BE => PwAudioFormat::S24_32BE,
-                        AudioFormat::U24_32LE => PwAudioFormat::U24_32LE,
-                        AudioFormat::U24_32BE => PwAudioFormat::U24_32BE,
-                        AudioFormat::S32LE => PwAudioFormat::S32LE,
-                        AudioFormat::S32BE => PwAudioFormat::S32BE,
-                        AudioFormat::U32LE => PwAudioFormat::U32LE,
-                        AudioFormat::U32BE => PwAudioFormat::U32BE,
-                        AudioFormat::S24LE => PwAudioFormat::S24LE,
-                        AudioFormat::S24BE => PwAudioFormat::S24BE,
-                        AudioFormat::U24LE => PwAudioFormat::U24LE,
-                        AudioFormat::U24BE => PwAudioFormat::U24BE,
-                        AudioFormat::S20LE => PwAudioFormat::S20LE,
-                        AudioFormat::S20BE => PwAudioFormat::S20BE,
-                        AudioFormat::U20LE => PwAudioFormat::U20LE,
-                        AudioFormat::U20BE => PwAudioFormat::U20BE,
-                        AudioFormat::S18LE => PwAudioFormat::S18LE,
-                        AudioFormat::S18BE => PwAudioFormat::S18BE,
-                        AudioFormat::U18LE => PwAudioFormat::U18LE,
-                        AudioFormat::U18BE => PwAudioFormat::U18BE,
-                        AudioFormat::F32LE => PwAudioFormat::F32LE,
-                        AudioFormat::F32BE => PwAudioFormat::F32BE,
-                        AudioFormat::F64LE => PwAudioFormat::F64LE,
-                        AudioFormat::F64BE => PwAudioFormat::F64BE,
+                        PCMFormat::S16LE => PwAudioFormat::S16LE,
                     };
                     audio_info.set_format(pw_format);
                     audio_info.set_rate(sample_rate_hz);
@@ -251,34 +224,7 @@ fn add_param_changed_callback(
         logger.debug(&format!("audio format: {:?}", audio_info.format()));
 
         let format = match audio_info.format() {
-            PwAudioFormat::S16LE => AudioFormat::S16LE,
-            PwAudioFormat::S16BE => AudioFormat::S16BE,
-            PwAudioFormat::U16LE => AudioFormat::U16LE,
-            PwAudioFormat::U16BE => AudioFormat::U16BE,
-            PwAudioFormat::S24_32LE => AudioFormat::S24_32LE,
-            PwAudioFormat::S24_32BE => AudioFormat::S24_32BE,
-            PwAudioFormat::U24_32LE => AudioFormat::U24_32LE,
-            PwAudioFormat::U24_32BE => AudioFormat::U24_32BE,
-            PwAudioFormat::S32LE => AudioFormat::S32LE,
-            PwAudioFormat::S32BE => AudioFormat::S32BE,
-            PwAudioFormat::U32LE => AudioFormat::U32LE,
-            PwAudioFormat::U32BE => AudioFormat::U32BE,
-            PwAudioFormat::S24LE => AudioFormat::S24LE,
-            PwAudioFormat::S24BE => AudioFormat::S24BE,
-            PwAudioFormat::U24LE => AudioFormat::U24LE,
-            PwAudioFormat::U24BE => AudioFormat::U24BE,
-            PwAudioFormat::S20LE => AudioFormat::S20LE,
-            PwAudioFormat::S20BE => AudioFormat::S20BE,
-            PwAudioFormat::U20LE => AudioFormat::U20LE,
-            PwAudioFormat::U20BE => AudioFormat::U20BE,
-            PwAudioFormat::S18LE => AudioFormat::S18LE,
-            PwAudioFormat::S18BE => AudioFormat::S18BE,
-            PwAudioFormat::U18LE => AudioFormat::U18LE,
-            PwAudioFormat::U18BE => AudioFormat::U18BE,
-            PwAudioFormat::F32LE => AudioFormat::F32LE,
-            PwAudioFormat::F32BE => AudioFormat::F32BE,
-            PwAudioFormat::F64LE => AudioFormat::F64LE,
-            PwAudioFormat::F64BE => AudioFormat::F64BE,
+            PwAudioFormat::S16LE => PCMFormat::S16LE,
             _ => panic!("Unsupported format for now"),
         };
         let sample_rate_hz = audio_info.rate();

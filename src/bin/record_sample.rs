@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use jarvis_code::logger::ConsoleLogger;
 use jarvis_code::speech::audio::AudioRecorder;
-use jarvis_code::speech::audio_format::AudioFormat;
+use jarvis_code::speech::audio_format::PCMFormat;
 use jarvis_code::speech::audio_format::SoundSpec;
 
 // You can use this binary to record a sample using the AudioRecorder.
@@ -22,7 +22,7 @@ async fn main() -> anyhow::Result<()> {
     let mut rec = AudioRecorder::new(logger.clone());
 
     let sound_spec = SoundSpec::PCM {
-        format: AudioFormat::S16LE,
+        format: PCMFormat::S16LE,
         sample_rate_hz: 24000,
         num_channels: 1,
     };

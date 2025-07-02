@@ -1,15 +1,16 @@
-//! Using the OpenAI realtime transcription API here:
-//! https://platform.openai.com/docs/guides/realtime?use-case=transcription
+//! Using the [Open AI realtime transcription API](https://platform.openai.com/docs/guides/realtime?use-case=transcription)
 
 use std::str::FromStr;
+use std::sync::mpsc::Receiver;
 use std::thread;
 
 use anyhow::{Context, Ok, bail};
 use base64::prelude::*;
-use futures_util::{SinkExt, StreamExt, TryFutureExt};
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json;
 use tokio::net::TcpStream;
+use tokio::runtime::Handle as TokioRuntimeHandle;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::{
@@ -20,7 +21,7 @@ use tokio_tungstenite::{
 use crate::speech::audio::AudioRecorder;
 use crate::{
     config::Config,
-    speech::audio_format::{AudioFormat, SoundSpec},
+    speech::audio_format::{PCMFormat, SoundSpec},
 };
 
 use super::RecognizedSpeech;
@@ -41,7 +42,7 @@ impl SpeechListener {
 
     pub async fn listen_to_input(&mut self) -> anyhow::Result<RecognizedSpeech> {
         let desired_format = SoundSpec::PCM {
-            format: AudioFormat::S16LE,
+            format: PCMFormat::S16LE,
             sample_rate_hz: 24000,
             num_channels: 1,
         };
@@ -54,24 +55,9 @@ impl SpeechListener {
             )
         }
 
-        let url = http::Uri::from_str("wss://api.openai.com/v1/realtime?intent=transcription")?;
-        // into_client_request for Uri will set headers required for websockets
-        let mut req = url.into_client_request()?;
-        let headers = req.headers_mut();
-        headers.try_insert(
-            "Authorization",
-            HeaderValue::from_str(&("Bearer ".to_owned() + &self.api_key))?,
-        )?;
-        headers.try_insert("OpenAI-Beta", HeaderValue::from_str("realtime=v1")?)?;
-
-        let (ws_stream, _res) = connect_async(req)
-            .await
-            .expect("Failed to connect to OpenAI realtime API");
+        let ws_stream = create_ws(&self.api_key).await?;
 
         Self::run_speech_session(ws_stream, sound_receiver).await?;
-
-        // pin_mut!(stdin_to_ws, ws_to_stdout);
-        // future::select(stdin_to_ws, ws_to_stdout).await;
 
         Ok(RecognizedSpeech {
             text: "todo".to_string(),
@@ -79,10 +65,10 @@ impl SpeechListener {
     }
 
     async fn run_speech_session(
-        ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
-        sound_stream: std::sync::mpsc::Receiver<Vec<u8>>,
+        mut ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
+        sound_stream: Receiver<Vec<u8>>,
     ) -> anyhow::Result<()> {
-        let (mut write, mut read) = ws_stream.split();
+        // let (mut write, mut read) = ws_stream.split();
 
         let session_configuration = TranscriptionSessionUpdate {
             type_: TranscriptionSessionUpdateType::Update,
@@ -108,68 +94,165 @@ impl SpeechListener {
         let msg = serde_json::to_string(&session_configuration)?;
         let msg = Message::Text(msg.into());
 
-        write
+        ws_stream
             .feed(msg.clone())
             .await
             .context(format!("Failed to send message {msg}"))?;
 
-        let msg = read
-            .next()
-            .await
-            .ok_or(anyhow::format_err!(
-                "Stream closed while waiting for transcription_session.updated event"
-            ))
-            .and_then(|it| it.context("Failed to receive transcription_session.updated event"))?;
-        let json_msg = if let Message::Text(msg) = msg {
-            msg.as_str().to_owned()
-        } else {
-            bail!("Message {msg} from transcription API does not appear to contain valid text data")
-        };
-        let msg = serde_json::from_str::<TranscriptionMessage>(&json_msg)
-            .context(format!("Failed to parse transcription message {json_msg}"))?;
-        match msg {
-            TranscriptionMessage::SessionCreated(_) => println!("Session created"),
-            _ => bail!(
-                "Expected transcription_session.updated message from transcription API, but got {json_msg}"
-            ),
-        }
-
-        // TODO Can we wait for sound_stream and read concurrently using async
-        // code? Then we could also send Pongs to the ping events ...
-        thread::spawn(move || {
-            for chunk in &sound_stream {
-                let json = "{\"type\": \"input_audio_buffer.append\",\"audio\": \"".to_owned();
-                let json = json + &BASE64_STANDARD.encode(chunk);
-                let json = json + "\"}";
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .build()
-                    .expect("Building runtime failed");
-                rt.block_on(
-                    write
-                        .feed(Message::Text(json.into()))
-                        .map_err(|err| eprintln!("Could not send audio data: {err}")),
-                )
-                .unwrap();
-            }
-        });
-
-        read.for_each(|message| async {
-            match message.unwrap() {
-                Message::Ping(_) => println!("Ping received"),
-                Message::Text(msg) => {
-                    let msg = msg.as_str();
-                    let msg: TranscriptionMessage = serde_json::from_str(msg).unwrap();
-                    println!("msg received: {msg:#?}");
-                }
-                _ => println!("Other message received"),
-            }
-            // todo
+        expect_event(&mut ws_stream, "transcription_session.created", |event| {
+            matches!(event, TranscriptionMessage::SessionCreated(_))
         })
-        .await;
+        .await?;
+        expect_event(&mut ws_stream, "transcription_session.updated", |event| {
+            matches!(event, TranscriptionMessage::SessionUpdated(_))
+        })
+        .await?;
+
+        Self::run_transcription(sound_stream, ws_stream).await?;
 
         Ok(())
     }
+
+    async fn run_transcription(
+        sound_stream: Receiver<Vec<u8>>,
+        ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
+    ) -> anyhow::Result<RecognizedSpeech> {
+        // TODO this is the meat of this whole module. Move it further top
+
+        let (mut write_ws, read_ws) = ws_stream.split();
+
+        let tokio_rt_handle = TokioRuntimeHandle::current();
+        // Send sound chunks in separate thread to not block receiving events
+        thread::spawn(move || {
+            let mut next_msg = sound_stream.recv();
+            while let Result::Ok(chunk) = next_msg {
+                let json = "{\"type\": \"input_audio_buffer.append\",\"audio\": \"".to_owned();
+                let json = json + &BASE64_STANDARD.encode(chunk);
+                let json = json + "\"}";
+                tokio_rt_handle.block_on(async {
+                    match write_ws.feed(Message::Text(json.into())).await {
+                        Result::Ok(()) => (),
+                        Err(err) => eprintln!("Could not send audio data: {err}"),
+                    }
+                });
+
+                next_msg = sound_stream.recv();
+            }
+        });
+
+        read_ws
+            .fold(
+                Ok(RecognizedSpeech {
+                    text: String::new(),
+                }),
+                async move |acc, message| {
+                    match (acc, message) {
+                        (err @ Result::Err(_), _) => err,
+                        (acc, Result::Ok(Message::Ping(_))) => {
+                            // pings are responded to by tungstenite
+                            acc
+                        }
+                        (acc, Result::Ok(Message::Text(msg))) => {
+                            let msg = msg.as_str();
+                            let msg: TranscriptionMessage = serde_json::from_str(msg).unwrap();
+                            println!("msg received: {msg:#?}");
+                            match msg {
+                                TranscriptionMessage::TranscriptionCompleted(content) => {
+                                    let mut updated = acc.unwrap().clone();
+                                    updated.text += &content.transcript;
+                                    Ok(updated)
+                                }
+                                _ => acc,
+                            }
+                        }
+                        (_, Result::Err(err)) => Result::Err(err)
+                            .context("Connection to OpenAI API failed unexpectedly: {err}"),
+                        (acc, _) => acc,
+                    }
+                },
+            )
+            .await
+    }
 }
+
+async fn create_ws(api_key: &str) -> anyhow::Result<WebSocketStream<MaybeTlsStream<TcpStream>>> {
+    let url = http::Uri::from_str("wss://api.openai.com/v1/realtime?intent=transcription")?;
+    // into_client_request for Uri will set headers required for websockets
+    let mut req = url.into_client_request()?;
+    let headers = req.headers_mut();
+    let header_val = "Bearer ".to_owned() + api_key;
+    let header_val = HeaderValue::from_str(&header_val)
+        .context("Could not create header from OpenAI API key")?;
+    headers
+        .try_insert("Authorization", header_val)
+        .context("Failed to modify transcription websocket request headers")?;
+    let header_val = "realtime=v1";
+    let header_val = HeaderValue::from_str("realtime=v1")
+        .context(format!("Could not create header from '{header_val}'"))?;
+    headers
+        .try_insert("OpenAI-Beta", header_val)
+        .context("Failed to modify transcription websocket request headers")?;
+
+    let (ws_stream, _res) = connect_async(req).await?;
+    Ok(ws_stream)
+}
+
+async fn expect_event<F>(
+    read: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
+    name: &str,
+    event_matcher: F,
+) -> anyhow::Result<()>
+where
+    F: FnOnce(TranscriptionMessage) -> bool,
+{
+    let msg = read
+        .next()
+        .await
+        .ok_or(anyhow::format_err!(
+            "Stream closed while waiting for {name} event"
+        ))
+        .and_then(|it| it.context(format!("Failed to receive {name} event")))?;
+    let json_msg = if let Message::Text(msg) = msg {
+        msg.as_str().to_owned()
+    } else {
+        bail!(
+            "Message '{msg}' from the OpenAI transcription API does not appear to contain valid text data"
+        )
+    };
+    let msg = serde_json::from_str::<TranscriptionMessage>(&json_msg)
+        .context(format!("Failed to parse transcription message {json_msg}"))?;
+
+    if let TranscriptionMessage::Error(err) = msg {
+        bail!(
+            "The OpenAI transition API responded with an error: {}: {}",
+            err.error.type_,
+            err.error.message,
+        )
+    }
+    if !event_matcher(msg) {
+        bail!("Expected {name} message from transcription API, but got {json_msg}");
+    }
+
+    Ok(())
+}
+
+// use tokio::sync::mpsc::UnboundedReceiver as TokioUnboundedReceiver;
+// use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;
+// fn to_tokio_receiver<T: Send + 'static>(
+//     stream: std::sync::mpsc::Receiver<T>,
+// ) -> TokioUnboundedReceiver<T> {
+//     let (sender, tokio_receiver) = tokio_unbounded_channel();
+//     thread::spawn(move || {
+//         for t in stream {
+//             let receiver_closed = sender.send(t).is_err();
+//             if receiver_closed {
+//                 break;
+//             }
+//         }
+//     });
+//
+//     tokio_receiver
+// }
 
 pub enum TranscriptionSessionUpdateType {
     Update,
@@ -366,6 +449,7 @@ pub struct ErrorEventDetail {
     pub type_: String,
     pub event_id: Option<String>,
     pub code: Option<String>,
+    pub message: String,
     pub param: Option<String>,
 }
 

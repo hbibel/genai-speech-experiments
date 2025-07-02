@@ -11,6 +11,7 @@ use super::audio::AudioRecorder;
 
 use openai::SpeechListener as OpenAISpeechListener;
 
+#[derive(Clone)]
 pub struct RecognizedSpeech {
     pub text: String,
 }
