@@ -13,9 +13,9 @@ async fn main() -> anyhow::Result<()> {
     let mut app_composite = app_composite::AppComposite::new(&config);
 
     loop {
-        let user_command = app_composite.speech_listener.listen_to_input().await?.text;
+        let user_command = app_composite.speech_listener.listen_to_input().await?;
 
-        println!("User said: {user_command}");
+        println!("User said: {user_command:?}");
 
         todo!("for now let's run the loop only once")
         // user_command = get_user_input()

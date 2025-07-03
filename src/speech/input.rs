@@ -16,6 +16,12 @@ pub struct RecognizedSpeech {
     pub text: String,
 }
 
+#[derive(Debug)]
+pub enum Transcription {
+    Empty,
+    Some { text: String },
+}
+
 pub struct SpeechListener(SpeechListenerImpl);
 
 impl SpeechListener {
@@ -29,7 +35,7 @@ impl SpeechListener {
         )))
     }
 
-    pub async fn listen_to_input(&mut self) -> anyhow::Result<RecognizedSpeech> {
+    pub async fn listen_to_input(&mut self) -> anyhow::Result<Transcription> {
         self.0.listen_to_input().await
     }
 }
@@ -39,7 +45,7 @@ enum SpeechListenerImpl {
 }
 
 impl SpeechListenerImpl {
-    async fn listen_to_input(&mut self) -> anyhow::Result<RecognizedSpeech> {
+    async fn listen_to_input(&mut self) -> anyhow::Result<Transcription> {
         match self {
             SpeechListenerImpl::OpenAI(l) => l.listen_to_input().await,
         }
