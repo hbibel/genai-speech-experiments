@@ -1,7 +1,7 @@
 use jarvis_code::app_composite;
 use jarvis_code::config;
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
     // Initialize rustls crypto provider, for secure connections
     rustls::crypto::aws_lc_rs::default_provider()

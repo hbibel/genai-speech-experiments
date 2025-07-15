@@ -9,7 +9,7 @@ use futures_util::{SinkExt, Stream, StreamExt, TryStreamExt, future};
 use serde::{Deserialize, Serialize};
 use serde_json;
 use tokio::net::TcpStream;
-use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
+use tokio::sync::mpsc::{Receiver as TokioReceiver, channel};
 use tokio_tungstenite::tungstenite;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
@@ -131,13 +131,17 @@ fn to_event_stream<S: StreamExt<Item = Result<tungstenite::Message, tungstenite:
     })
 }
 
-fn to_async_receiver<T: Send + 'static>(receiver: Receiver<T>) -> UnboundedReceiver<T> {
-    // TODO something doesn't work here I believe
-    let (tx, rx) = unbounded_channel();
+fn to_async_receiver<T: Send + 'static>(receiver: Receiver<T>) -> TokioReceiver<T> {
+    // channel size chosen arbitrarily; note that an unbounded channel here
+    // can lead to an issue we block all threads on the Tokio runtime.
+    let (tx, rx) = channel(1024);
     tokio::spawn(async move {
-        receiver
-            .iter()
-            .try_for_each(|x| tx.send(x).map_err(|err| println!("Failed to send: {err}")));
+        for x in receiver {
+            match tx.send(x).await {
+                Result::Ok(()) => (),
+                Result::Err(err) => println!("Failed to send: {err}"),
+            }
+        }
     });
     rx
 }
