@@ -41,6 +41,8 @@ impl SpeechListener {
     }
 
     pub async fn listen_to_input(&mut self) -> anyhow::Result<Transcription> {
+        // OpenAI specifies that when using PCM, audio data must be 16 bit,
+        // little endian, 24kHz, 1 channel
         let desired_format = SoundSpec::PCM {
             format: PCMFormat::S16LE,
             sample_rate_hz: 24000,
@@ -59,25 +61,82 @@ impl SpeechListener {
             create_ws(&self.api_key).await?;
         let (mut ws_write, ws_read) = ws_stream.split();
 
+        let session_update = TranscriptionSessionUpdate {
+            type_: TranscriptionSessionUpdateType::Update,
+            session: TranscriptionSessionUpdateSession {
+                input_audio_format: TranscriptionAudioFormat::PCM16,
+                input_audio_noise_reduction: TranscriptionNoiseReduction {
+                    type_: NoiseReductionType::FarField,
+                },
+                input_audio_transcription: InputAudioTranscription {
+                    language: Some("en".to_owned()),
+                    model: Some("gpt-4o-transcribe".to_owned()),
+                    prompt: Some("Expect words related to programming".to_owned()),
+                },
+                // TODO semantic VAD, although preferred, is broken right now
+                // See https://community.openai.com/t/semantic-vad-might-not-be-working-with-transcription-mode/1151522/7
+                turn_detection: TranscriptionTurnDetection {
+                    type_: TurnDetectionType::ServerVad,
+                },
+            },
+        };
+        ws_write
+            .feed(Message::Text(
+                serde_json::to_string(&session_update).unwrap().into(),
+            ))
+            .await
+            .context("Failed to write transcription session update")?;
+
         let transcription_events = to_event_stream(ws_read);
         let transcription_fut = tokio::spawn(async move {
             let result = transcription_events
-                .try_fold(Transcription::Empty, async |acc, event| {
-                    match (acc, event) {
-                        (_, TranscriptionMessage::Error(err)) => Err(anyhow::Error::msg(format!(
-                            "Transcription failed with an error from the API: {}",
-                            err.error.message
-                        ))),
-                        (_, TranscriptionMessage::TranscriptionCompleted(transcription)) => {
+                // TODO this is crap, and stop is still not triggered.
+                // Maybe abuse try_fold's behavior by returning an Err on
+                // TransactionCompleted?
+                .map(move |event| {
+                    let stop = stop.clone();
+                    match event {
+                        Err(err) => {
+                            stop.stop();
+                            Err(anyhow::Error::msg(format!(
+                                "Transcription failed with an error from the API: {}",
+                                err
+                            )))
+                        }
+                        Result::Ok(TranscriptionMessage::Error(err)) => {
+                            stop.stop();
+                            Err(anyhow::Error::msg(format!(
+                                "Transcription failed with an error from the API: {}",
+                                err.error.message
+                            )))
+                        }
+                        Result::Ok(TranscriptionMessage::TranscriptionCompleted(transcription)) => {
+                            println!("Transcription completed: {transcription:?}");
+                            stop.stop();
                             Ok(Transcription::Some {
                                 text: transcription.transcript,
                             })
                         }
-                        (acc, _) => Ok(acc),
+                        _ => Ok(Transcription::Empty),
                     }
                 })
+                .take_while(|x| future::ready(x.is_ok()))
+                .fold(Ok(Transcription::Empty), |_, elem| async move { elem })
+                // .try_fold(Transcription::Empty, async |acc, event| {
+                //     match (acc, event) {
+                //         (_, TranscriptionMessage::Error(err)) => Err(anyhow::Error::msg(format!(
+                //             "Transcription failed with an error from the API: {}",
+                //             err.error.message
+                //         ))),
+                //         (_, TranscriptionMessage::TranscriptionCompleted(transcription)) => {
+                //             Ok(Transcription::Some {
+                //                 text: transcription.transcript,
+                //             })
+                //         }
+                //         (acc, _) => Ok(acc),
+                //     }
+                // })
                 .await;
-            stop.stop();
             result
         });
 
@@ -119,10 +178,9 @@ fn to_event_stream<S: StreamExt<Item = Result<tungstenite::Message, tungstenite:
         Result::Ok(msg) => {
             if let Message::Text(msg) = msg {
                 let msg = msg.as_str();
-                println!("Received message {msg}");
                 Some(
                     serde_json::from_str::<TranscriptionMessage>(msg)
-                        .context("Failed to serialize message {msg}"),
+                        .context(format!("Failed to serialize message {msg}")),
                 )
             } else {
                 None
@@ -278,6 +336,10 @@ pub struct TranscriptionNoiseReduction {
 #[derive(serde::Serialize)]
 pub struct InputAudioTranscription {
     // TODO: Attributes could be modeled with enums
+
+    // OpenAI complains if this is set to null
+    #[serde(skip_serializing_if = "Option::is_none")]
+    // ISO 639 language code
     language: Option<String>,
     model: Option<String>,
     prompt: Option<String>,
@@ -385,9 +447,9 @@ pub enum InputAudioNoiseReduction {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct InputAudioTranscriptionData {
     // TODO language and model could also be enums
-    language: String,
-    model: String,
-    prompt: String,
+    language: Option<String>,
+    model: Option<String>,
+    prompt: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -15,8 +15,6 @@ use jarvis_code::speech::audio_format::SoundSpec;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
-    println!("Hello, world!");
-
     let logger = Arc::new(Mutex::new(ConsoleLogger::new()));
 
     let mut rec = AudioRecorder::new(logger.clone());
