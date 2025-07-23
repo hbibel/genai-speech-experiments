@@ -5,7 +5,7 @@ use std::sync::mpsc::Receiver;
 
 use anyhow::{Context, Ok, bail};
 use base64::prelude::*;
-use futures_util::{SinkExt, Stream, StreamExt, TryStreamExt, future};
+use futures_util::{SinkExt, Stream, StreamExt, future};
 use serde::{Deserialize, Serialize};
 use serde_json;
 use tokio::net::TcpStream;
@@ -21,7 +21,7 @@ use tokio_tungstenite::{
 use crate::speech::audio::AudioRecorder;
 use crate::{
     config::Config,
-    speech::audio_format::{PCMFormat, SoundSpec},
+    speech::audio::format::{PCMFormat, SoundSpec},
 };
 
 use super::Transcription;
@@ -49,12 +49,14 @@ impl SpeechListener {
             num_channels: 1,
         };
         let (sound_receiver, stop, actual_format) =
-            self.audio_recorder.listen(Some(desired_format.clone()));
+            self.audio_recorder.listen(Some(desired_format.clone()))?;
 
-        if desired_format != actual_format {
-            anyhow::bail!(
-                "Could not record audio in the required format {desired_format}. Your device instead records in format {actual_format}"
-            )
+        if let Some(actual_format) = actual_format {
+            if desired_format != actual_format {
+                anyhow::bail!(
+                    "Could not record audio in the required format {desired_format}. Your device instead records in format {actual_format}"
+                )
+            }
         }
 
         let ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>> =

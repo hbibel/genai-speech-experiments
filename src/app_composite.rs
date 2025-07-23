@@ -11,16 +11,18 @@ pub struct AppComposite {
 }
 
 impl AppComposite {
-    #[must_use]
-    pub fn new(config: &Config) -> Self {
+    pub fn new(config: &Config) -> anyhow::Result<Self> {
         let logger = ConsoleLogger::new();
         let logger = Arc::new(Mutex::new(logger));
 
-        let audio_recorder = AudioRecorder::new(logger.clone());
+        let audio_recorder = match config.recording_file.clone() {
+            Some(f) => AudioRecorder::new(logger.clone(), Some(&f)),
+            None => AudioRecorder::new(logger.clone(), None),
+        }?;
 
-        Self {
+        Ok(Self {
             speech_listener: SpeechListener::new(config, audio_recorder),
             logger,
-        }
+        })
     }
 }

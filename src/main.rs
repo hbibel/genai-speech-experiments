@@ -10,7 +10,7 @@ async fn main() -> anyhow::Result<()> {
 
     let config = config::from_env()?;
 
-    let mut app_composite = app_composite::AppComposite::new(&config);
+    let mut app_composite = app_composite::AppComposite::new(&config)?;
 
     loop {
         let user_command = app_composite.speech_listener.listen_to_input().await?;
