@@ -89,56 +89,36 @@ impl SpeechListener {
             .await
             .context("Failed to write transcription session update")?;
 
-        let transcription_events = to_event_stream(ws_read);
+        let mut transcription_events = Box::pin(to_event_stream(ws_read));
         let transcription_fut = tokio::spawn(async move {
-            let result = transcription_events
-                // TODO this is crap, and stop is still not triggered.
-                // Maybe abuse try_fold's behavior by returning an Err on
-                // TransactionCompleted?
-                .map(move |event| {
-                    let stop = stop.clone();
-                    match event {
-                        Err(err) => {
-                            stop.stop();
-                            Err(anyhow::Error::msg(format!(
-                                "Transcription failed with an error from the API: {}",
-                                err
-                            )))
-                        }
-                        Result::Ok(TranscriptionMessage::Error(err)) => {
-                            stop.stop();
-                            Err(anyhow::Error::msg(format!(
-                                "Transcription failed with an error from the API: {}",
-                                err.error.message
-                            )))
-                        }
-                        Result::Ok(TranscriptionMessage::TranscriptionCompleted(transcription)) => {
-                            println!("Transcription completed: {transcription:?}");
-                            stop.stop();
-                            Ok(Transcription::Some {
-                                text: transcription.transcript,
-                            })
-                        }
-                        _ => Ok(Transcription::Empty),
+            let mut result = Ok(Transcription::Empty);
+
+            while let Some(event) = transcription_events.next().await {
+                match event {
+                    Err(err) => {
+                        result = Err(anyhow::Error::msg(format!(
+                            "Transcription failed with an error from the API: {err}"
+                        )));
+                        break;
                     }
-                })
-                .take_while(|x| future::ready(x.is_ok()))
-                .fold(Ok(Transcription::Empty), |_, elem| async move { elem })
-                // .try_fold(Transcription::Empty, async |acc, event| {
-                //     match (acc, event) {
-                //         (_, TranscriptionMessage::Error(err)) => Err(anyhow::Error::msg(format!(
-                //             "Transcription failed with an error from the API: {}",
-                //             err.error.message
-                //         ))),
-                //         (_, TranscriptionMessage::TranscriptionCompleted(transcription)) => {
-                //             Ok(Transcription::Some {
-                //                 text: transcription.transcript,
-                //             })
-                //         }
-                //         (acc, _) => Ok(acc),
-                //     }
-                // })
-                .await;
+                    Result::Ok(TranscriptionMessage::Error(err)) => {
+                        result = Err(anyhow::Error::msg(format!(
+                            "Transcription failed with an error from the API: {}",
+                            err.error.message
+                        )));
+                        break;
+                    }
+                    Result::Ok(TranscriptionMessage::TranscriptionCompleted(transcription)) => {
+                        result = Ok(Transcription::Some {
+                            text: transcription.transcript,
+                        });
+                        break;
+                    }
+                    _ => (),
+                }
+            }
+            stop.stop();
+
             result
         });
 
@@ -228,6 +208,8 @@ async fn create_ws(api_key: &str) -> anyhow::Result<WebSocketStream<MaybeTlsStre
     Ok(ws_stream)
 }
 
+// TODO Do I want to expect receiving events in the specified order?
+#[allow(dead_code)]
 async fn expect_event<F>(
     read: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
     name: &str,
