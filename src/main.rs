@@ -20,7 +20,9 @@ async fn main() -> anyhow::Result<()> {
 
     loop {
         let user_command = app_composite.speech_listener.listen_to_input().await?;
-        println!("User said: {user_command:?}");
+        app_composite
+            .logger
+            .debug(format!("User said: {user_command:?}"));
 
         let user_text = match user_command {
             Transcription::Empty => String::default(),

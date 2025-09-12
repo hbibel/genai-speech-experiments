@@ -1,49 +1,52 @@
 use colored::Colorize;
 
-pub trait Logger: Send {
-    fn debug(&self, msg: &str);
-
-    fn info(&self, msg: &str);
-
-    fn warn(&self, msg: &str);
-
-    fn error(&self, msg: &str);
-}
-
-#[derive(PartialEq, PartialOrd)]
+#[derive(PartialEq, PartialOrd, Clone, Copy)]
 pub enum Level {
+    /// Something really went wrong and the user will experience problems.
+    Error,
+    /// Generally silent, except something occurs that may lead to failure or
+    /// unexpected behavior
+    Warning,
+    /// Normal informative output to follow the control flow
     Info,
+    /// Fine-grained output to understand the program behavior down to
+    /// implementation details
     Debug,
 }
 
-pub struct ConsoleLogger {
+#[derive(Clone, Copy)]
+pub struct Logger {
     verbosity: Level,
 }
 
-impl ConsoleLogger {
+impl Logger {
     pub fn new() -> Self {
         Self {
             verbosity: Level::Debug, // TODO default should be Info
         }
     }
-}
 
-impl Logger for ConsoleLogger {
-    fn debug(&self, msg: &str) {
+    pub fn debug<S: AsRef<str>>(&self, msg: S) {
         if self.verbosity >= Level::Debug {
-            println!("{}", msg.cyan());
+            println!("{}", msg.as_ref().cyan());
         }
     }
 
-    fn info(&self, msg: &str) {
-        println!("{msg}");
+    pub fn info<S: AsRef<str>>(&self, msg: S) {
+        if self.verbosity >= Level::Info {
+            println!("{}", msg.as_ref());
+        }
     }
 
-    fn warn(&self, msg: &str) {
-        eprintln!("{}", msg.yellow());
+    pub fn warn<S: AsRef<str>>(&self, msg: S) {
+        if self.verbosity >= Level::Warning {
+            eprintln!("{}", msg.as_ref().yellow());
+        }
     }
 
-    fn error(&self, msg: &str) {
-        eprintln!("{}", msg.red());
+    pub fn error<S: AsRef<str>>(&self, msg: S) {
+        if self.verbosity >= Level::Error {
+            eprintln!("{}", msg.as_ref().red());
+        }
     }
 }

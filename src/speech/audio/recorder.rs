@@ -1,10 +1,7 @@
 mod file;
 mod pipewire;
 
-use std::{
-    path::Path,
-    sync::{Arc, Mutex, mpsc::Receiver},
-};
+use std::{path::Path, sync::mpsc::Receiver};
 
 use file::FileAudioRecorder;
 use pipewire::PipewireAudioRecorder;
@@ -18,7 +15,7 @@ type ListenResult = anyhow::Result<(Receiver<Vec<u8>>, StopTrigger, Option<Sound
 pub struct AudioRecorder(AudioRecorderImpl);
 
 impl AudioRecorder {
-    pub fn new(logger: Arc<Mutex<dyn Logger>>, from_file: Option<&Path>) -> anyhow::Result<Self> {
+    pub fn new(logger: Logger, from_file: Option<&Path>) -> anyhow::Result<Self> {
         match from_file {
             Some(path) => Ok(Self(AudioRecorderImpl::SampleFile(FileAudioRecorder(
                 path.to_path_buf(),

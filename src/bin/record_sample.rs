@@ -1,10 +1,8 @@
 use std::fs::File;
 use std::io::Write;
-use std::sync::Arc;
-use std::sync::Mutex;
 use std::time::Duration;
 
-use jarvis_code::logger::ConsoleLogger;
+use jarvis_code::logger::Logger;
 use jarvis_code::speech::audio::AudioRecorder;
 use jarvis_code::speech::audio::format::PCMFormat;
 use jarvis_code::speech::audio::format::SoundSpec;
@@ -15,7 +13,7 @@ use jarvis_code::speech::audio::format::SoundSpec;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
-    let logger = Arc::new(Mutex::new(ConsoleLogger::new()));
+    let logger = Logger::new();
 
     let mut rec = AudioRecorder::new(logger.clone(), None).unwrap();
 

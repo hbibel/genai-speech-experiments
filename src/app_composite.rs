@@ -1,23 +1,21 @@
 use crate::{
     config::Config,
-    logger::{ConsoleLogger, Logger},
+    logger::Logger,
     speech::{audio::AudioRecorder, input::SpeechListener},
 };
-use std::sync::{Arc, Mutex};
 
 pub struct AppComposite {
     pub speech_listener: SpeechListener,
-    pub logger: Arc<Mutex<dyn Logger>>,
+    pub logger: Logger, // pub intent_classifier: Box<dyn IntentClassifier>,
 }
 
 impl AppComposite {
     pub fn new(config: &Config) -> anyhow::Result<Self> {
-        let logger = ConsoleLogger::new();
-        let logger = Arc::new(Mutex::new(logger));
+        let logger = Logger::new();
 
         let audio_recorder = match config.recording_file.clone() {
-            Some(f) => AudioRecorder::new(logger.clone(), Some(&f)),
-            None => AudioRecorder::new(logger.clone(), None),
+            Some(f) => AudioRecorder::new(logger, Some(&f)),
+            None => AudioRecorder::new(logger, None),
         }?;
 
         Ok(Self {

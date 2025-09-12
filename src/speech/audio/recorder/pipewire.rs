@@ -23,11 +23,11 @@ struct StreamUserData {}
 pub struct PipewireAudioRecorder {
     audio_data_sender: mpsc::Sender<Vec<u8>>,
     audio_data_receiver: Arc<Mutex<mpsc::Receiver<Vec<u8>>>>,
-    logger: Arc<Mutex<dyn Logger>>,
+    logger: Logger,
 }
 
 impl PipewireAudioRecorder {
-    pub fn new(logger: Arc<Mutex<dyn Logger>>) -> Self {
+    pub fn new(logger: Logger) -> Self {
         let (audio_data_sender, audio_data_receiver) = std::sync::mpsc::channel::<Vec<u8>>();
         let audio_data_receiver = Arc::new(Mutex::new(audio_data_receiver));
 
@@ -41,7 +41,7 @@ impl PipewireAudioRecorder {
     #[allow(clippy::unnecessary_wraps)]
     pub fn listen(&mut self, request_format: Option<SoundSpec>) -> ListenResult {
         let negotiated_spec =
-            start_pipewire_loop(&self.audio_data_sender, self.logger.clone(), request_format);
+            start_pipewire_loop(&self.audio_data_sender, self.logger, request_format);
 
         let (tx, rx) = mpsc::channel();
         let trigger = StopTrigger::new();
@@ -77,7 +77,7 @@ impl PipewireAudioRecorder {
 
 fn start_pipewire_loop(
     audio_data_sender: &mpsc::Sender<Vec<u8>>,
-    logger: Arc<Mutex<dyn Logger>>,
+    logger: Logger,
     request_format: Option<SoundSpec>,
 ) -> SoundSpec {
     let audio_data_sender = audio_data_sender.clone();
@@ -147,7 +147,7 @@ fn start_pipewire_loop(
             .unwrap();
 
         let listener = stream.add_local_listener_with_user_data(StreamUserData {});
-        let listener = add_param_changed_callback(listener, sound_spec_sender, logger.clone());
+        let listener = add_param_changed_callback(listener, sound_spec_sender, logger);
         let listener = add_process_callback(listener, &audio_data_sender, logger);
         // listener must outlive the main loop
         let _listener = listener.register();
@@ -161,11 +161,11 @@ fn start_pipewire_loop(
     sound_spec_receiver.recv().unwrap()
 }
 
-fn add_param_changed_callback(
-    listener: pipewire::stream::ListenerLocalBuilder<'_, StreamUserData>,
+fn add_param_changed_callback<'a>(
+    listener: pipewire::stream::ListenerLocalBuilder<'a, StreamUserData>,
     sound_spec_sender: mpsc::Sender<SoundSpec>,
-    logger: Arc<Mutex<dyn Logger>>,
-) -> pipewire::stream::ListenerLocalBuilder<'_, StreamUserData> {
+    logger: Logger,
+) -> pipewire::stream::ListenerLocalBuilder<'a, StreamUserData> {
     listener.param_changed(move |_stream, _user_data, id, param| {
         // TODO is this called again if we switch our Audio device
         // mid-recording? If yes, we may want to notify outside code
@@ -194,7 +194,6 @@ fn add_param_changed_callback(
             .parse(param)
             .expect("Failed to parse param changed to AudioInfoRaw");
 
-        let logger = &*logger.lock().unwrap();
         logger.debug(&format!("audio format: {:?}", audio_info.format()));
 
         let format = match audio_info.format() {
@@ -216,7 +215,7 @@ fn add_param_changed_callback(
 fn add_process_callback<'a>(
     listener: pipewire::stream::ListenerLocalBuilder<'a, StreamUserData>,
     audio_data_sender: &mpsc::Sender<Vec<u8>>,
-    logger: Arc<Mutex<dyn Logger>>,
+    logger: Logger,
 ) -> pipewire::stream::ListenerLocalBuilder<'a, StreamUserData> {
     let audio_data_sender = audio_data_sender.clone();
 
@@ -226,7 +225,7 @@ fn add_process_callback<'a>(
         if buf.is_none() {
             // TODO check what the None value means so that I can create a
             // better error message
-            logger.lock().unwrap().error("No buffer");
+            logger.error("No buffer");
             return;
         }
         let mut buf = buf.unwrap();
@@ -241,7 +240,7 @@ fn add_process_callback<'a>(
 
             audio_data_sender
                 .send(data.to_vec())
-                .unwrap_or_else(|_| logger.lock().unwrap().error("Failed to send audio data"));
+                .unwrap_or_else(|_| logger.error("Failed to send audio data"));
         }
     })
 }
